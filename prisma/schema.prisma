@@ -8,16 +8,29 @@ generator client {
 }
 
 // The User model
+// model User {
+//  id            String    @id @default(cuid())
+//  name          String?
+//  email         String?   @unique
+//  password      String?   // Added for Credentials login
+//  emailVerified DateTime?
+//  image         String?
+//  accounts      Account[]
+//  sessions      Session[]
+// }
+
 model User {
   id            String    @id @default(cuid())
   name          String?
   email         String?   @unique
-  password      String?   // Added for Credentials login
+  password      String?
+  role          String    @default("user")  // <--- ADD THIS
   emailVerified DateTime?
   image         String?
   accounts      Account[]
   sessions      Session[]
 }
+// ... rest of file remains the same
 
 // Required for Auth.js (Social Logins, etc.)
 model Account {

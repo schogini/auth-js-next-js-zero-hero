@@ -1,69 +1,86 @@
-[Image of OAuth 2.0 flow diagram]
+[Image of Role Based Access Control Model]
 
-Here is the setup for **Lab 4: Adding GitHub OAuth**.
+Here is the setup for **Lab 5: Role-Based Access Control (RBAC)**.
 
-In Lab 3, you authenticated using a database-backed email/password. In Lab 4, we add "Sign in with GitHub".
+In previous labs, a user was either "logged in" or "not logged in." In the real world, you have **Users**, **Admins**, **Editors**, etc.
 
-**The Magic of Auth.js:**
-Remember the `Account` model you added to `schema.prisma` in Lab 3? That table exists specifically to link social identities (like a GitHub ID) to your `User` record. When a user signs in with GitHub, Auth.js will automatically create a User record *and* an Account record linking them.
+**The Challenge:**
+
+1.  **Database:** We need to store the role (e.g., "admin" or "user").
+2.  **Session:** By default, the session cookie **only** contains name, email, and image. It does not know about your database roles. We must "inject" the role into the session.
+3.  **TypeScript:** Next.js is strict. If you try to type `session.user.role`, it will yell at you because that property doesn't exist on the default type definition.
 
 ### Step 1: Setup the Folder
 
-1.  Copy your `lab3` folder and rename it to `lab4`.
-2.  Open the `lab4` folder.
+1.  Copy your `lab4` folder and rename it to `lab5`.
+2.  Open the `lab5` folder.
 
-### Step 2: Get GitHub Credentials
+### Step 2: Update the Database Schema
 
-You cannot code this part; you must configure it on GitHub.
+We need to add a `role` column to our User table.
 
-1.  Log in to your GitHub account.
-2.  Go to **Settings** (click your profile icon top-right) -\> **Developer settings** (at the very bottom left) -\> **OAuth Apps**.
-3.  Click **New OAuth App**.
-4.  Fill in the form:
-      * **Application Name:** `Auth.js Lab 4`
-      * **Homepage URL:** `http://localhost:3000`
-      * **Authorization callback URL:** `http://localhost:3000/api/auth/callback/github`
-      * *(Note: The callback path `/api/auth/callback/[provider]` is standard for Auth.js)*
-5.  Click **Register application**.
-6.  **Copy the Client ID**.
-7.  Click **Generate a new client secret** and **Copy the Client Secret**.
+**File:** `lab5/prisma/schema.prisma`
+Update the `User` model to include the role field. We set the default to "user" so new sign-ups don't accidentally become admins.
 
-### Step 3: Update Docker Configuration
+```prisma
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  password      String?
+  role          String    @default("user")  // <--- ADD THIS
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+}
+// ... rest of file remains the same
+```
 
-We need to pass these secrets to our container.
+### Step 3: TypeScript Definition (Crucial)
 
-**File:** `lab4/docker-compose.yml`
-Update the `environment` section. Replace the placeholders with the actual strings you just copied from GitHub.
+This is the most common stumbling block in Auth.js. We need to tell TypeScript that our Session user now has a `role`.
 
-```yaml
-version: '3.8'
+Create a folder `types` in the root, and a file `next-auth.d.ts`.
 
-services:
-  web:
-    build: .
-    ports:
-      - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/.next
-    environment:
-      - AUTH_SECRET=my_super_secret_key_123
-      # Add these lines:
-      - AUTH_GITHUB_ID=your_client_id_paste_here
-      - AUTH_GITHUB_SECRET=your_client_secret_paste_here
+**File:** `lab5/types/next-auth.d.ts`
+
+```typescript
+import NextAuth, { DefaultSession } from "next-auth"
+import { JWT } from "next-auth/jwt"
+
+declare module "next-auth" {
+  interface Session {
+    user: {
+      role: string
+    } & DefaultSession["user"]
+  }
+
+  interface User {
+    role: string
+  }
+}
+
+declare module "next-auth/jwt" {
+  interface JWT {
+    role: string
+  }
+}
 ```
 
 ### Step 4: Update Auth Logic
 
-We simply add the provider to the configuration.
+We need to do two things here:
 
-**File:** `lab4/auth.ts`
+1.  **Logic:** When creating a new user in our "Credentials Mock Logic", assign the "admin" role if the email is `admin@example.com`.
+2.  **Callbacks:** Pass the role from the Database -\> Token -\> Session.
+
+**File:** `lab5/auth.ts`
 
 ```typescript
 import NextAuth from "next-auth"
 import Credentials from "next-auth/providers/credentials"
-import GitHub from "next-auth/providers/github" // <--- Import this
+import GitHub from "next-auth/providers/github"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import { prisma } from "@/lib/prisma"
 
@@ -71,16 +88,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: { strategy: "jwt" },
   providers: [
-    // 1. GitHub Provider
     GitHub({
       clientId: process.env.AUTH_GITHUB_ID,
       clientSecret: process.env.AUTH_GITHUB_SECRET,
+      // We can't easily force "admin" on GitHub login without a dashboard, 
+      // so GitHub users will be "user" by default.
     }),
-    // 2. Credentials Provider (Kept from Lab 3)
     Credentials({
       name: "Credentials",
       credentials: {
-        email: { label: "Email", type: "email", placeholder: "user@example.com" },
+        email: { label: "Email", type: "email", placeholder: "admin@example.com" },
         password: { label: "Password", type: "password" },
       },
       authorize: async (credentials) => {
@@ -90,8 +107,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         let user = await prisma.user.findUnique({ where: { email } });
         
         if (!user) {
+            // LAB HACK: If email is admin@example.com, make them ADMIN
+            const role = email === "admin@example.com" ? "admin" : "user";
+            
             user = await prisma.user.create({
-                data: { email, name: "New User", password: "password" }
+                data: { 
+                  email, 
+                  name: "New User", 
+                  password: "password",
+                  role: role // <--- Save role to DB
+                }
             })
         }
 
@@ -100,44 +125,157 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       },
     }),
   ],
+  // CALLBACKS - The Secret Sauce
+  callbacks: {
+    async jwt({ token, user }) {
+      // "user" is only available the very first time they login.
+      // We copy the role from the DB user object to the JWT token.
+      if (user) {
+        token.role = user.role
+      }
+      return token
+    },
+    async session({ session, token }) {
+      // We copy the role from the JWT token to the Session object
+      // so the frontend can see it.
+      if (session?.user && token.role) {
+        session.user.role = token.role
+      }
+      return session
+    }
+  }
 })
 ```
 
-### Step 5: Run Lab 4
+### Step 5: Create the Admin Dashboard
 
-1.  **Rebuild** (Environment variables changed).
+Let's create a page that **only** admins can see.
+
+**File:** `lab5/app/admin/page.tsx`
+(Create `admin` folder inside `app`)
+
+```tsx
+import { auth } from "@/auth";
+import { redirect } from "next/navigation";
+
+export default async function AdminDashboard() {
+  const session = await auth();
+
+  // 1. Check if logged in
+  if (!session || !session.user) {
+    redirect("/api/auth/signin");
+  }
+
+  // 2. Check for Role
+  if (session.user.role !== "admin") {
+    return (
+      <div className="p-8 bg-red-50 text-red-800 border border-red-200 rounded">
+        <h1 className="text-3xl font-bold">403 Forbidden</h1>
+        <p>You are logged in as a <strong>{session.user.role}</strong>.</p>
+        <p>You do not have permission to view this page.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-8 bg-purple-50 border border-purple-200 rounded">
+      <h1 className="text-3xl font-bold text-purple-900 mb-4">Admin Dashboard</h1>
+      <p className="text-lg">Welcome, Master Administrator.</p>
+      <div className="mt-4 p-4 bg-white rounded shadow">
+        <p>Only users with <code>role: 'admin'</code> can see this.</p>
+      </div>
+    </div>
+  );
+}
+```
+
+### Step 6: Update Navbar
+
+We want to show a link to the Admin Dashboard, but **only** if the user is actually an admin.
+
+**File:** `lab5/app/components/Navbar.tsx`
+
+```tsx
+import Link from "next/link";
+import { auth, signOut } from "@/auth";
+
+export default async function Navbar() {
+  const session = await auth();
+
+  return (
+    <nav className="bg-slate-900 text-white p-4">
+      <div className="container mx-auto flex justify-between items-center">
+        <div className="font-bold text-xl">Auth.js Lab 5</div>
+        
+        <div className="flex gap-4 items-center">
+          <Link href="/" className="hover:text-blue-400">Home</Link>
+          <Link href="/members" className="hover:text-blue-400">Members</Link>
+          
+          {/* CONDITIONAL RENDERING FOR ADMIN */}
+          {session?.user?.role === 'admin' && (
+            <Link href="/admin" className="text-purple-400 hover:text-purple-300 font-bold">
+              Admin Panel
+            </Link>
+          )}
+          
+          {session && session.user ? (
+            <div className="flex gap-4 items-center border-l pl-4 border-slate-600">
+              <div className="flex flex-col text-right">
+                 <span className="text-sm text-slate-300">{session.user.name}</span>
+                 {/* Show Badge */}
+                 <span className="text-[10px] uppercase bg-slate-700 px-1 rounded text-center">
+                    {session.user.role}
+                 </span>
+              </div>
+              <form action={async () => { "use server"; await signOut() }}>
+                <button type="submit" className="bg-red-600 text-sm px-3 py-1 rounded hover:bg-red-700">
+                  Sign Out
+                </button>
+              </form>
+            </div>
+          ) : (
+            <Link href="/api/auth/signin" className="bg-blue-600 px-4 py-2 rounded hover:bg-blue-700">
+              Sign In
+            </Link>
+          )}
+        </div>
+      </div>
+    </nav>
+  );
+}
+```
+
+### Step 7: Run Lab 5
+
+1.  **Rebuild:** (We changed Schema and Dockerfile needs to run `prisma generate` again).
     ```bash
+    docker-compose down
     docker-compose up --build
     ```
 2.  Open `http://localhost:3000`.
-3.  Click **Members** (or Sign In).
 
-**What to expect:**
+**Testing the Role Logic:**
 
-1.  You will now see **two** buttons on the login page:
-      * "Sign in with GitHub"
-      * "Sign in with Credentials"
-2.  Click **Sign in with GitHub**.
-3.  You will be redirected to GitHub.com to authorize the app.
-4.  Once you agree, you are redirected back to your Members page.
-5.  Look at the JSON output on the Members page.
-      * `name`: Your actual GitHub username.
-      * `email`: Your GitHub email.
-      * `image`: Your GitHub avatar (automatically pulled\!).
+1.  **Test as Regular User:**
 
-**Database Check:**
-If you check the `dev.db` (using a SQLite viewer or Prisma Studio), you will see:
+      * Sign in with GitHub **OR** use a random email (e.g., `joe@test.com` / `password`).
+      * Look at the Navbar. You will **NOT** see "Admin Panel".
+      * Manually type `http://localhost:3000/admin` in the URL bar.
+      * You should see the big red "403 Forbidden" message.
 
-1.  A new **User** row (with your GitHub image).
-2.  A new **Account** row. This row contains the `provider: "github"` and your specific `providerAccountId` from GitHub. This is how Auth.js knows it's you next time.
+2.  **Test as Admin:**
+
+      * Sign Out.
+      * Sign In with Credentials.
+      * **Email:** `admin@example.com`
+      * **Password:** `password`
+      * *Note: Our logic in `auth.ts` detects this specific email and writes `role: 'admin'` to the database.*
+      * Look at the Navbar. You **SHOULD** see "Admin Panel" in purple text.
+      * Click it. You should see the "Welcome, Master Administrator" dashboard.
 
 -----
 
-### Ready for the Advanced Labs?
+**Concept Check:**
+You now have a system where the Database holds the truth, the JWT carries the truth to the browser, and the Session provides that truth to your React components.
 
-You have completed the "Standard Stack" (Next.js + Prisma + SQLite + OAuth).
-
-  * **Lab 5:** **Role-Based Access (Admin vs User).** We will modify the database schema to add roles and prevent "regular" users from seeing specific buttons.
-  * **Lab 6:** **Custom Login Page.** The default page is ugly. We will build a custom Tailwind login form that looks professional.
-
-Which one would you like to do next?
+Ready for **Lab 6** where we finally get rid of that ugly default white login page and build our own?
