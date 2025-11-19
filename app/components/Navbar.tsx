@@ -7,7 +7,7 @@ export default async function Navbar() {
   return (
     <nav className="bg-slate-900 text-white p-4">
       <div className="container mx-auto flex justify-between items-center">
-        <div className="font-bold text-xl">Auth.js Lab 5</div>
+        <div className="font-bold text-xl">Auth.js Lab 6</div>
         
         <div className="flex gap-4 items-center">
           <Link href="/" className="hover:text-blue-400">Home</Link>
