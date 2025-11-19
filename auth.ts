@@ -1,29 +1,52 @@
 import NextAuth from "next-auth"
 import Credentials from "next-auth/providers/credentials"
+import { PrismaAdapter } from "@auth/prisma-adapter"
+import { prisma } from "@/lib/prisma"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  adapter: PrismaAdapter(prisma),
+  session: { strategy: "jwt" }, // Required when using Credentials with an Adapter
   providers: [
     Credentials({
-      // The name to display on the sign in form (e.g. "Sign in with...")
       name: "Credentials",
-      // The credentials object is used to generate the inputs on the login page
       credentials: {
-        email: { label: "Email", type: "text", placeholder: "test@example.com" },
-        password: { label: "Password", type: "password" }
+        email: { label: "Email", type: "email", placeholder: "user@example.com" },
+        password: { label: "Password", type: "password" },
       },
-      // The logic to verify the user
       authorize: async (credentials) => {
-        // HARDCODED USER FOR LAB 2
-        const user = { id: "1", name: "J Smith", email: "test@example.com", password: "password" }
-
-        if (credentials?.email === user.email && credentials?.password === user.password) {
-          // Any object returned will be saved in the `user` property of the JWT
-          return user
-        } else {
-          // If you return null then an error will be displayed advising the user to check their details.
-          return null
+        if (!credentials?.email || !credentials?.password) {
+          return null;
         }
-      }
-    })
+
+        const email = credentials.email as string;
+
+        // 1. Check if user exists in DB
+        let user = await prisma.user.findUnique({
+          where: {
+            email: email,
+          },
+        });
+
+        // 2. LAB HACK: If user doesn't exist, create them on the fly!
+        // (In a real app, you would have a separate Register page)
+        if (!user) {
+            user = await prisma.user.create({
+                data: {
+                    email: email,
+                    name: "New User",
+                    password: "password", // In production, HASH this!
+                }
+            })
+        }
+
+        // 3. Validate Password
+        // (In production, use bcrypt.compare(credentials.password, user.password))
+        if (credentials.password === user.password) {
+          return user;
+        }
+        
+        return null;
+      },
+    }),
   ],
 })

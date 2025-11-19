@@ -1,228 +1,251 @@
-Here is the setup for **Lab 2: Simple Authentication**.
+Here is the setup for **Lab 3: Database Persistence (SQLite & Prisma)**.
 
-In this lab, we will introduce `next-auth` (v5 beta). We will configure a "Credentials" provider which allows logging in with a username and password. For now, we will **hardcode** the user to understand the flow without worrying about a database yet.
+In Lab 2, the user "J Smith" disappeared every time you changed the code or restarted the server. In Lab 3, we will use **Prisma** (an ORM) and **SQLite** (a file-based database) to store our users permanently.
+
+**Important Concept:**
+By default, when using the **Credentials** provider (Email/Password), Auth.js forces the session to be a **JWT** (cookie-based). However, we will use the database to **store and retrieve the user profile**.
 
 ### Step 1: Setup the Folder
 
-1.  Copy your entire `lab1` folder and rename it to `lab2`.
-2.  Open the `lab2` folder.
+1.  Copy your `lab2` folder and rename it to `lab3`.
+2.  Open the `lab3` folder.
 
-### Step 2: Update Configuration
+### Step 2: Install Dependencies
 
-We need to add the authentication library.
+We need to add Prisma and the adapter to `package.json`.
 
-**File:** `lab2/package.json`
-Find the `dependencies` section and add `"next-auth": "5.0.0-beta.25"` (or just "beta").
+**File:** `lab3/package.json`
+Update your dependencies and scripts exactly like this. Note the new `dev` script which ensures the database is created when Docker starts.
 
 ```json
+{
+  "name": "lab3",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "prisma db push && next dev", 
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
   "dependencies": {
+    "@auth/prisma-adapter": "^1.4.0",
+    "@prisma/client": "^5.10.0",
     "next": "14.1.0",
-    "next-auth": "beta",  <-- ADD THIS
+    "next-auth": "beta",
     "react": "^18",
     "react-dom": "^18"
   },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.0.1",
+    "eslint": "^8",
+    "eslint-config-next": "14.1.0",
+    "postcss": "^8",
+    "prisma": "^5.10.0",
+    "tailwindcss": "^3.3.0",
+    "typescript": "^5"
+  }
+}
 ```
 
-**File:** `lab2/docker-compose.yml`
-We need to add an `AUTH_SECRET` environment variable. This is used to encrypt the session tokens.
+### Step 3: The Database Schema
 
-```yaml
-version: '3.8'
-services:
-  web:
-    build: .
-    ports:
-      - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/.next
-    environment:
-      - AUTH_SECRET=my_super_secret_key_123  # <-- ADD THIS
+We need to define what our tables look like. Create a folder named `prisma` in the root, and a file named `schema.prisma` inside it.
+
+**File:** `lab3/prisma/schema.prisma`
+
+```prisma
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// The User model
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  password      String?   // Added for Credentials login
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+}
+
+// Required for Auth.js (Social Logins, etc.)
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String? 
+  access_token       String? 
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
 ```
 
------
+### Step 4: The Prisma Client Instance
 
-### Step 3: The Authentication Logic
+We need a helper file to connect to the DB efficiently without creating too many connections during development.
 
-Create a new file named `auth.ts` in the root of `lab2` (same level as `package.json`). This is the heart of Auth.js v5.
+Create file: `lab3/lib/prisma.ts` (Create the `lib` folder first)
 
-**File:** `lab2/auth.ts`
+```typescript
+import { PrismaClient } from "@prisma/client"
+
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient }
+
+export const prisma = globalForPrisma.prisma || new PrismaClient()
+
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma
+```
+
+### Step 5: Update Auth Logic (`auth.ts`)
+
+Now we connect Auth.js to the database. We will also add a small logic hack to **auto-create** a user if one doesn't exist, so you don't have to write a seed script manually.
+
+**File:** `lab3/auth.ts`
 
 ```typescript
 import NextAuth from "next-auth"
 import Credentials from "next-auth/providers/credentials"
+import { PrismaAdapter } from "@auth/prisma-adapter"
+import { prisma } from "@/lib/prisma"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  adapter: PrismaAdapter(prisma),
+  session: { strategy: "jwt" }, // Required when using Credentials with an Adapter
   providers: [
     Credentials({
-      // The name to display on the sign in form (e.g. "Sign in with...")
       name: "Credentials",
-      // The credentials object is used to generate the inputs on the login page
       credentials: {
-        email: { label: "Email", type: "text", placeholder: "test@example.com" },
-        password: { label: "Password", type: "password" }
+        email: { label: "Email", type: "email", placeholder: "user@example.com" },
+        password: { label: "Password", type: "password" },
       },
-      // The logic to verify the user
       authorize: async (credentials) => {
-        // HARDCODED USER FOR LAB 2
-        const user = { id: "1", name: "J Smith", email: "test@example.com", password: "password" }
-
-        if (credentials?.email === user.email && credentials?.password === user.password) {
-          // Any object returned will be saved in the `user` property of the JWT
-          return user
-        } else {
-          // If you return null then an error will be displayed advising the user to check their details.
-          return null
+        if (!credentials?.email || !credentials?.password) {
+          return null;
         }
-      }
-    })
+
+        const email = credentials.email as string;
+
+        // 1. Check if user exists in DB
+        let user = await prisma.user.findUnique({
+          where: {
+            email: email,
+          },
+        });
+
+        // 2. LAB HACK: If user doesn't exist, create them on the fly!
+        // (In a real app, you would have a separate Register page)
+        if (!user) {
+            user = await prisma.user.create({
+                data: {
+                    email: email,
+                    name: "New User",
+                    password: "password", // In production, HASH this!
+                }
+            })
+        }
+
+        // 3. Validate Password
+        // (In production, use bcrypt.compare(credentials.password, user.password))
+        if (credentials.password === user.password) {
+          return user;
+        }
+        
+        return null;
+      },
+    }),
   ],
 })
 ```
 
-### Step 4: The API Route
+### Step 6: Docker Configuration Update
 
-Next.js needs an API route to handle the sign-in and sign-out requests.
+We need to ensure `prisma` commands can run inside the container.
 
-Create the folder path: `app/api/auth/[...nextauth]`
-Create the file: `route.ts` inside that folder.
+**File:** `lab3/Dockerfile`
+We add `npx prisma generate` to the build process so the TypeScript client is created.
 
-**File:** `lab2/app/api/auth/[...nextauth]/route.ts`
+```dockerfile
+FROM node:20-alpine
 
-```typescript
-import { handlers } from "@/auth" // Refers to auth.ts we just made
-export const { GET, POST } = handlers
+WORKDIR /app
+
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install
+
+COPY . .
+
+# Generate Prisma Client
+RUN npx prisma generate
+
+EXPOSE 3000
+
+# Note: The CMD is now handled by "npm run dev" in package.json
+# which runs "prisma db push" first.
+CMD ["npm", "run", "dev"]
 ```
 
-### Step 5: Middleware Protection
-
-This file acts as a gatekeeper. It runs before every request. If the user tries to access a protected route without being logged in, this will stop them.
-
-Create `middleware.ts` in the root of `lab2`.
-
-**File:** `lab2/middleware.ts`
-
-```typescript
-import { auth } from "@/auth"
-
-export default auth((req) => {
-  const isLoggedIn = !!req.auth
-  // If trying to access /members and NOT logged in...
-  if (req.nextUrl.pathname.startsWith('/members') && !isLoggedIn) {
-    return Response.redirect(new URL('/api/auth/signin', req.nextUrl))
-  }
-})
-
-// Optionally, don't invoke Middleware on some paths
-export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
-}
-```
+*(The `docker-compose.yml` from Lab 2 works fine as is, because it maps the volume. The SQLite file `dev.db` will appear in your `lab3/prisma` folder on your host machine.)*
 
 -----
 
-### Step 6: Update the UI
+### Step 7: Run Lab 3
 
-**1. Update the Navbar to show Sign In/Out**
-We will make this a `server component` so we can check the session directly.
-
-**File:** `lab2/app/components/Navbar.tsx`
-
-```tsx
-import Link from "next/link";
-import { auth, signOut } from "@/auth"; // Import from our config
-
-export default async function Navbar() {
-  const session = await auth();
-
-  return (
-    <nav className="bg-slate-900 text-white p-4">
-      <div className="container mx-auto flex justify-between items-center">
-        <div className="font-bold text-xl">Auth.js Lab 2</div>
-        
-        <div className="flex gap-4 items-center">
-          <Link href="/" className="hover:text-blue-400">Home</Link>
-          <Link href="/members" className="hover:text-blue-400">Members</Link>
-          
-          {session && session.user ? (
-            <div className="flex gap-4 items-center border-l pl-4 border-slate-600">
-              <span className="text-sm text-slate-300">Hi, {session.user.name}</span>
-              {/* Server Action to Sign Out */}
-              <form
-                action={async () => {
-                  "use server"
-                  await signOut()
-                }}
-              >
-                <button type="submit" className="bg-red-600 text-sm px-3 py-1 rounded hover:bg-red-700">
-                  Sign Out
-                </button>
-              </form>
-            </div>
-          ) : (
-            <Link href="/api/auth/signin" className="bg-blue-600 px-4 py-2 rounded hover:bg-blue-700">
-              Sign In
-            </Link>
-          )}
-        </div>
-      </div>
-    </nav>
-  );
-}
-```
-
-**2. Update Members Page to Show User Data**
-Now that we have a user, let's display their info on the protected page.
-
-**File:** `lab2/app/members/page.tsx`
-
-```tsx
-import { auth } from "@/auth";
-
-export default async function MembersPage() {
-  const session = await auth();
-
-  return (
-    <div className="bg-white border p-8 rounded shadow-lg">
-      <h1 className="text-3xl font-bold text-green-700 mb-4">Access Granted</h1>
-      <p className="mb-6 text-gray-600">
-        Welcome to the private members area.
-      </p>
-
-      <div className="bg-slate-100 p-4 rounded border font-mono text-sm">
-        <h3 className="font-bold text-slate-700 border-b border-slate-300 mb-2 pb-1">Current Session Data:</h3>
-        <pre>{JSON.stringify(session, null, 2)}</pre>
-      </div>
-    </div>
-  );
-}
-```
-
------
-
-### Step 7: Run Lab 2
-
-Since we changed `package.json` (added `next-auth`), we **must rebuild** the Docker image.
-
-1.  Open terminal in `lab2`.
-2.  Run:
+1.  **Rebuild is mandatory** because we added dependencies and changed the Dockerfile.
+2.  Open terminal in `lab3`.
+3.  Run:
     ```bash
+    docker-compose down
     docker-compose up --build
     ```
-3.  Go to `http://localhost:3000`.
 
-**How to Test:**
+**What to expect:**
 
-1.  Click **Members**. You should be instantly redirected to a login page (auto-generated by Auth.js).
-2.  Try a fake password. It should fail.
-3.  Login with:
-      * **Email:** `test@example.com`
-      * **Password:** `password`
-4.  You should be redirected to the Members page and see your JSON session data.
-5.  The Navbar should now say "Hi, J Smith" and show a "Sign Out" button.
+1.  Watch the terminal logs. You will see `Prisma schema loaded from prisma/schema.prisma` and `The database is now in sync with your schema`.
+2.  Open `http://localhost:3000`.
+3.  Go to **Members**. You will be redirected to Sign In.
+4.  **Enter ANY email** (e.g., `admin@example.com`) and the password `password`.
+5.  **Magic:** Because of our logic in `auth.ts`, since this user didn't exist, the code created it in SQLite immediately and logged you in.
+6.  If you look in your `lab3/prisma` folder, you will see a `dev.db` file. If you restart Docker, that file remains, and your user remains.
 
-**Concept Check:**
-You now have a working authentication system\! However, if you restart the Docker container, you stay logged in only because the session is stored in a Cookie in your browser (JWT). We do not have a database yet, so we can't "create" new users.
+**Validation:**
+Once logged in, the Members page should show your JSON session. The `sub` (subject) ID in the JSON will now be a complex string (like `clt...`) which is the CUID generated by the Database, proving it came from SQLite\!
 
-Ready for **Lab 3** to add SQLite and Prisma?
+Ready for **Lab 4** to add GitHub OAuth?
