@@ -10,5 +10,6 @@ services:
       - /app/.next
     # environment:
     #   - NODE_ENV=development
+    #   - AUTH_SECRET=123456
     env_file:
       - ./.env

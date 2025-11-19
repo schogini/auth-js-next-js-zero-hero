@@ -1,22 +1,19 @@
-export default function MembersPage() {
+import { auth } from "@/auth";
+
+export default async function MembersPage() {
+  const session = await auth();
+
   return (
-    <div className="bg-slate-100 p-8 rounded-lg border border-slate-200">
-      <h1 className="text-3xl font-bold text-red-600 mb-4">
-        Members Only Area
-      </h1>
-      <p className="text-lg mb-4">
-        If you are reading this, you have access to our secret content!
+    <div className="bg-white border p-8 rounded shadow-lg">
+      <h1 className="text-3xl font-bold text-green-700 mb-4">Access Granted</h1>
+      <p className="mb-6 text-gray-600">
+        Welcome to the private members area.
       </p>
-      <div className="bg-white p-4 rounded shadow text-blue-700">
-        <h2 className="font-bold">Secret Data:</h2>
-        <ul className="list-disc list-inside mt-2">
-          <li>User ID: ???</li>
-          <li>Session Token: ???</li>
-        </ul>
+
+      <div className="bg-slate-100 p-4 rounded border font-mono text-sm">
+        <h3 className="font-bold text-slate-700 border-b border-slate-300 mb-2 pb-1">Current Session Data:</h3>
+        <pre className="text-blue-700">{JSON.stringify(session, null, 2)}</pre>
       </div>
-      <p className="mt-6 text-sm text-slate-500">
-        (In Lab 1, this page is currently unsecured and visible to everyone.)
-      </p>
     </div>
   );
 }

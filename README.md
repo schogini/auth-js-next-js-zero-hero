@@ -1,175 +1,30 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Here is the setup for **Lab 2: Simple Authentication**.
 
-## Getting Started
+In this lab, we will introduce `next-auth` (v5 beta). We will configure a "Credentials" provider which allows logging in with a username and password. For now, we will **hardcode** the user to understand the flow without worrying about a database yet.
 
-First, run the development server:
+### Step 1: Setup the Folder
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1.  Copy your entire `lab1` folder and rename it to `lab2`.
+2.  Open the `lab2` folder.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Step 2: Update Configuration
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+We need to add the authentication library.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-
-
-
-
-# NEW DOCKERIZED
-
-Understood. Since we will not use `npx` to auto-generate the project, you will need to manually create the configuration files that the generator usually handles for you.
-
-Here is the complete manual setup for **Lab 1**.
-
-Create a folder named `lab1`. Inside that folder, create the files as listed below.
-
-### 1\. Configuration Files (The Root)
-
-These files define the project dependencies and settings.
-
-**File:** `lab1/package.json`
+**File:** `lab2/package.json`
+Find the `dependencies` section and add `"next-auth": "5.0.0-beta.25"` (or just "beta").
 
 ```json
-{
-  "name": "lab1",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
   "dependencies": {
     "next": "14.1.0",
+    "next-auth": "beta",  <-- ADD THIS
     "react": "^18",
     "react-dom": "^18"
   },
-  "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "autoprefixer": "^10.0.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.1.0",
-    "postcss": "^8",
-    "tailwindcss": "^3.3.0",
-    "typescript": "^5"
-  }
-}
 ```
 
-**File:** `lab1/tsconfig.json`
-
-```json
-{
-  "compilerOptions": {
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "allowJs": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "jsx": "preserve",
-    "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
-    "paths": {
-      "@/*": ["./*"]
-    }
-  },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
-}
-```
-
-**File:** `lab1/next.config.mjs`
-
-```javascript
-/** @type {import('next').NextConfig} */
-const nextConfig = {};
-
-export default nextConfig;
-```
-
-**File:** `lab1/tailwind.config.ts`
-
-```typescript
-import type { Config } from "tailwindcss";
-
-const config: Config = {
-  content: [
-    "./app/**/*.{js,ts,jsx,tsx,mdx}",
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-};
-export default config;
-```
-
-**File:** `lab1/postcss.config.js`
-
-```javascript
-module.exports = {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-};
-```
-
------
-
-### 2\. Docker Setup (The Infrastructure)
-
-**File:** `lab1/Dockerfile`
-
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-# Copy package files
-COPY package*.json ./
-# Install dependencies inside the container
-RUN npm install
-# Copy the rest of the files
-COPY . .
-EXPOSE 3000
-CMD ["npm", "run", "dev"]
-```
-
-**File:** `lab1/docker-compose.yml`
+**File:** `lab2/docker-compose.yml`
+We need to add an `AUTH_SECRET` environment variable. This is used to encrypt the session tokens.
 
 ```yaml
 version: '3.8'
@@ -182,83 +37,134 @@ services:
       - .:/app
       - /app/node_modules
       - /app/.next
+    environment:
+      - AUTH_SECRET=my_super_secret_key_123  # <-- ADD THIS
 ```
 
 -----
 
-### 3\. Application Code (The UI)
+### Step 3: The Authentication Logic
 
-Create a folder named `app` inside `lab1`. Then create the files below inside it.
+Create a new file named `auth.ts` in the root of `lab2` (same level as `package.json`). This is the heart of Auth.js v5.
 
-**File:** `lab1/app/globals.css`
+**File:** `lab2/auth.ts`
 
-```css
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+```typescript
+import NextAuth from "next-auth"
+import Credentials from "next-auth/providers/credentials"
+
+export const { handlers, signIn, signOut, auth } = NextAuth({
+  providers: [
+    Credentials({
+      // The name to display on the sign in form (e.g. "Sign in with...")
+      name: "Credentials",
+      // The credentials object is used to generate the inputs on the login page
+      credentials: {
+        email: { label: "Email", type: "text", placeholder: "test@example.com" },
+        password: { label: "Password", type: "password" }
+      },
+      // The logic to verify the user
+      authorize: async (credentials) => {
+        // HARDCODED USER FOR LAB 2
+        const user = { id: "1", name: "J Smith", email: "test@example.com", password: "password" }
+
+        if (credentials?.email === user.email && credentials?.password === user.password) {
+          // Any object returned will be saved in the `user` property of the JWT
+          return user
+        } else {
+          // If you return null then an error will be displayed advising the user to check their details.
+          return null
+        }
+      }
+    })
+  ],
+})
 ```
 
-**File:** `lab1/app/layout.tsx`
+### Step 4: The API Route
 
-```tsx
-import type { Metadata } from "next";
-import "./globals.css";
-import Navbar from "./components/Navbar";
+Next.js needs an API route to handle the sign-in and sign-out requests.
 
-export const metadata: Metadata = {
-  title: "Lab 1",
-  description: "Auth.js Lab 1",
-};
+Create the folder path: `app/api/auth/[...nextauth]`
+Create the file: `route.ts` inside that folder.
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <html lang="en">
-      <body>
-        <Navbar />
-        <main className="container mx-auto p-8">{children}</main>
-      </body>
-    </html>
-  );
+**File:** `lab2/app/api/auth/[...nextauth]/route.ts`
+
+```typescript
+import { handlers } from "@/auth" // Refers to auth.ts we just made
+export const { GET, POST } = handlers
+```
+
+### Step 5: Middleware Protection
+
+This file acts as a gatekeeper. It runs before every request. If the user tries to access a protected route without being logged in, this will stop them.
+
+Create `middleware.ts` in the root of `lab2`.
+
+**File:** `lab2/middleware.ts`
+
+```typescript
+import { auth } from "@/auth"
+
+export default auth((req) => {
+  const isLoggedIn = !!req.auth
+  // If trying to access /members and NOT logged in...
+  if (req.nextUrl.pathname.startsWith('/members') && !isLoggedIn) {
+    return Response.redirect(new URL('/api/auth/signin', req.nextUrl))
+  }
+})
+
+// Optionally, don't invoke Middleware on some paths
+export const config = {
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 }
 ```
 
-**File:** `lab1/app/page.tsx` (The Public Home Page)
+-----
 
-```tsx
-export default function Home() {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[50vh] gap-4">
-      <h1 className="text-4xl font-bold">Welcome to Lab 1</h1>
-      <p className="text-xl text-gray-600">Public Landing Page</p>
-      <div className="p-4 bg-yellow-100 text-yellow-800 border border-yellow-300 rounded">
-        Status: <strong>No Authentication</strong>
-      </div>
-    </div>
-  );
-}
-```
+### Step 6: Update the UI
 
-**File:** `lab1/app/components/Navbar.tsx`
-(Create the `components` folder inside `app` first)
+**1. Update the Navbar to show Sign In/Out**
+We will make this a `server component` so we can check the session directly.
+
+**File:** `lab2/app/components/Navbar.tsx`
 
 ```tsx
 import Link from "next/link";
+import { auth, signOut } from "@/auth"; // Import from our config
 
-export default function Navbar() {
+export default async function Navbar() {
+  const session = await auth();
+
   return (
     <nav className="bg-slate-900 text-white p-4">
       <div className="container mx-auto flex justify-between items-center">
-        <div className="font-bold text-xl">Auth.js Labs</div>
-        <div className="space-x-4">
+        <div className="font-bold text-xl">Auth.js Lab 2</div>
+        
+        <div className="flex gap-4 items-center">
           <Link href="/" className="hover:text-blue-400">Home</Link>
-          <Link href="/about" className="hover:text-blue-400">About</Link>
-          <Link href="/members" className="bg-blue-600 px-4 py-2 rounded hover:bg-blue-700">
-            Members
-          </Link>
+          <Link href="/members" className="hover:text-blue-400">Members</Link>
+          
+          {session && session.user ? (
+            <div className="flex gap-4 items-center border-l pl-4 border-slate-600">
+              <span className="text-sm text-slate-300">Hi, {session.user.name}</span>
+              {/* Server Action to Sign Out */}
+              <form
+                action={async () => {
+                  "use server"
+                  await signOut()
+                }}
+              >
+                <button type="submit" className="bg-red-600 text-sm px-3 py-1 rounded hover:bg-red-700">
+                  Sign Out
+                </button>
+              </form>
+            </div>
+          ) : (
+            <Link href="/api/auth/signin" className="bg-blue-600 px-4 py-2 rounded hover:bg-blue-700">
+              Sign In
+            </Link>
+          )}
         </div>
       </div>
     </nav>
@@ -266,24 +172,28 @@ export default function Navbar() {
 }
 ```
 
-**File:** `lab1/app/about/page.tsx`
-(Create the `about` folder inside `app` first)
+**2. Update Members Page to Show User Data**
+Now that we have a user, let's display their info on the protected page.
+
+**File:** `lab2/app/members/page.tsx`
 
 ```tsx
-export default function AboutPage() {
-  return <h1 className="text-2xl font-bold">Public About Page</h1>;
-}
-```
+import { auth } from "@/auth";
 
-**File:** `lab1/app/members/page.tsx`
-(Create the `members` folder inside `app` first)
+export default async function MembersPage() {
+  const session = await auth();
 
-```tsx
-export default function MembersPage() {
   return (
-    <div className="border p-8 rounded bg-gray-50">
-      <h1 className="text-2xl font-bold text-red-600 mb-4">Members Area</h1>
-      <p>If you see this, you are seeing protected content (currently insecure!).</p>
+    <div className="bg-white border p-8 rounded shadow-lg">
+      <h1 className="text-3xl font-bold text-green-700 mb-4">Access Granted</h1>
+      <p className="mb-6 text-gray-600">
+        Welcome to the private members area.
+      </p>
+
+      <div className="bg-slate-100 p-4 rounded border font-mono text-sm">
+        <h3 className="font-bold text-slate-700 border-b border-slate-300 mb-2 pb-1">Current Session Data:</h3>
+        <pre>{JSON.stringify(session, null, 2)}</pre>
+      </div>
     </div>
   );
 }
@@ -291,14 +201,28 @@ export default function MembersPage() {
 
 -----
 
-### How to Run
+### Step 7: Run Lab 2
 
-1.  Open your terminal in the `lab1` folder.
-2.  Run `docker compose up`.
-3.  Wait for the initial `npm install` to finish inside the container.
-4.  Visit `http://localhost:3000`.
+Since we changed `package.json` (added `next-auth`), we **must rebuild** the Docker image.
 
-**Validation:**
-You should see the UI, and you should be able to click "Members" and see the content without logging in.
+1.  Open terminal in `lab2`.
+2.  Run:
+    ```bash
+    docker-compose up --build
+    ```
+3.  Go to `http://localhost:3000`.
 
-Shall we move to **Lab 2** to add the actual Authentication logic?
+**How to Test:**
+
+1.  Click **Members**. You should be instantly redirected to a login page (auto-generated by Auth.js).
+2.  Try a fake password. It should fail.
+3.  Login with:
+      * **Email:** `test@example.com`
+      * **Password:** `password`
+4.  You should be redirected to the Members page and see your JSON session data.
+5.  The Navbar should now say "Hi, J Smith" and show a "Sign Out" button.
+
+**Concept Check:**
+You now have a working authentication system\! However, if you restart the Docker container, you stay logged in only because the session is stored in a Cookie in your browser (JWT). We do not have a database yet, so we can't "create" new users.
+
+Ready for **Lab 3** to add SQLite and Prisma?
