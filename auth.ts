@@ -1,12 +1,19 @@
 import NextAuth from "next-auth"
 import Credentials from "next-auth/providers/credentials"
+import GitHub from "next-auth/providers/github" // <--- Import this
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import { prisma } from "@/lib/prisma"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
-  session: { strategy: "jwt" }, // Required when using Credentials with an Adapter
+  session: { strategy: "jwt" },
   providers: [
+    // 1. GitHub Provider
+    GitHub({
+      clientId: process.env.AUTH_GITHUB_ID,
+      clientSecret: process.env.AUTH_GITHUB_SECRET,
+    }),
+    // 2. Credentials Provider (Kept from Lab 3)
     Credentials({
       name: "Credentials",
       credentials: {
@@ -14,37 +21,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       authorize: async (credentials) => {
-        if (!credentials?.email || !credentials?.password) {
-          return null;
-        }
-
+        if (!credentials?.email || !credentials?.password) return null;
         const email = credentials.email as string;
-
-        // 1. Check if user exists in DB
-        let user = await prisma.user.findUnique({
-          where: {
-            email: email,
-          },
-        });
-
-        // 2. LAB HACK: If user doesn't exist, create them on the fly!
-        // (In a real app, you would have a separate Register page)
+        
+        let user = await prisma.user.findUnique({ where: { email } });
+        
         if (!user) {
             user = await prisma.user.create({
-                data: {
-                    email: email,
-                    name: "New User",
-                    password: "password", // In production, HASH this!
-                }
+                data: { email, name: "New User", password: "password" }
             })
         }
 
-        // 3. Validate Password
-        // (In production, use bcrypt.compare(credentials.password, user.password))
-        if (credentials.password === user.password) {
-          return user;
-        }
-        
+        if (credentials.password === user.password) return user;
         return null;
       },
     }),

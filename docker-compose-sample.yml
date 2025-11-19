@@ -1,0 +1,16 @@
+
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      - AUTH_SECRET=123456
+      # Add these lines:
+      - AUTH_GITHUB_ID=YOUR CLIENT ID
+      - AUTH_GITHUB_SECRET=YOUR SECRET
