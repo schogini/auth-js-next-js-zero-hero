@@ -19,6 +19,6 @@ export async function authenticate(prevState: string | undefined, formData: Form
   }
 }
 
-export async function authenticateGithub() {
-  await signIn("github")
+export async function authenticateGoogle() {
+  await signIn("google")
 }

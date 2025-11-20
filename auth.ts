@@ -1,19 +1,19 @@
 import NextAuth from "next-auth"
 import Credentials from "next-auth/providers/credentials"
-import GitHub from "next-auth/providers/github"
+import Google from "next-auth/providers/google"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import { prisma } from "@/lib/prisma"
 
 // ... imports and providers remain the same ...
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  adapter: PrismaAdapter(prisma),
+  adapter: PrismaAdapter(prisma) as any,
   session: { strategy: "jwt" },
   providers: [
     // ... keep your existing GitHub and Credentials providers ...
-    GitHub({
-      clientId: process.env.AUTH_GITHUB_ID,
-      clientSecret: process.env.AUTH_GITHUB_SECRET,
+    Google({
+      clientId: process.env.AUTH_GOOGLE_ID,
+      clientSecret: process.env.AUTH_GOOGLE_SECRET,
     }),
     Credentials({
       name: "Credentials",
@@ -25,14 +25,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // ... keep your existing authorize logic ...
         if (!credentials?.email || !credentials?.password) return null;
         const email = credentials.email as string;
-        
+
         let user = await prisma.user.findUnique({ where: { email } });
-        
+
         if (!user) {
-            const role = email === "admin@example.com" ? "admin" : "user";
-            user = await prisma.user.create({
-                data: { email, name: "New User", password: "password", role }
-            })
+          const role = email === "admin@example.com" ? "admin" : "user";
+          user = await prisma.user.create({
+            data: { email, name: "New User", password: "password", role }
+          })
         }
 
         if (credentials.password === user.password) return user;
