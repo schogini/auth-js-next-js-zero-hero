@@ -1,16 +1,13 @@
 import NextAuth from "next-auth"
-import Credentials from "next-auth/providers/credentials"
 import Google from "next-auth/providers/google"
+import Credentials from "next-auth/providers/credentials"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import { prisma } from "@/lib/prisma"
 
-// ... imports and providers remain the same ...
-
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma) as any,
-  session: { strategy: "jwt" },
+  session: { strategy: "jwt" }, // Required when using Credentials with an Adapter
   providers: [
-    // ... keep your existing GitHub and Credentials providers ...
     Google({
       clientId: process.env.AUTH_GOOGLE_ID,
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
@@ -18,43 +15,43 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     Credentials({
       name: "Credentials",
       credentials: {
-        email: { label: "Email", type: "email" },
+        email: { label: "Email", type: "email", placeholder: "user@example.com" },
         password: { label: "Password", type: "password" },
       },
       authorize: async (credentials) => {
-        // ... keep your existing authorize logic ...
-        if (!credentials?.email || !credentials?.password) return null;
+        if (!credentials?.email || !credentials?.password) {
+          return null;
+        }
+
         const email = credentials.email as string;
 
-        let user = await prisma.user.findUnique({ where: { email } });
+        // 1. Check if user exists in DB
+        let user = await prisma.user.findUnique({
+          where: {
+            email: email,
+          },
+        });
 
+        // 2. LAB HACK: If user doesn't exist, create them on the fly!
+        // (In a real app, you would have a separate Register page)
         if (!user) {
-          const role = email === "admin@example.com" ? "admin" : "user";
           user = await prisma.user.create({
-            data: { email, name: "New User", password: "password", role }
+            data: {
+              email: email,
+              name: "New User",
+              password: "password", // In production, HASH this!
+            }
           })
         }
 
-        if (credentials.password === user.password) return user;
+        // 3. Validate Password
+        // (In production, use bcrypt.compare(credentials.password, user.password))
+        if (credentials.password === user.password) {
+          return user;
+        }
+
         return null;
       },
     }),
   ],
-  // NEW CONFIGURATION HERE
-  pages: {
-    signIn: "/auth/signin", // <--- Tells Auth.js to use our custom page
-  },
-  callbacks: {
-    // ... keep your existing callbacks ...
-    async jwt({ token, user }) {
-      if (user) token.role = user.role
-      return token
-    },
-    async session({ session, token }) {
-      if (session?.user && token.role) {
-        session.user.role = token.role
-      }
-      return session
-    }
-  }
 })
